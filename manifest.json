@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Vérification Numéro TVA",
+  "version": "1.0.0",
+  "description": "Glissez un fichier Excel/ODS pour vérifier chaque numéro de TVA intracommunautaire via VIES (Commission européenne). Le fichier n'est jamais modifié.",
+  "action": {
+    "default_title": "Vérifier les TVA d'un fichier",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "host_permissions": [
+    "https://ec.europa.eu/*"
+  ]
+}

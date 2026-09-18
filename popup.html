@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Vérification Numéro TVA</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Vérification des numéros de TVA</h1>
+      <p class="subtitle">Glissez votre fichier de déclaration (Excel .xlsx / .xls ou OpenDocument .ods / CSV) &mdash; chaque TVA est contrôlée sur VIES (Commission européenne). Votre fichier n'est jamais modifié.</p>
+    </header>
+
+    <section id="stepUpload">
+      <div id="dropZone" class="drop-zone">
+        <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="17 8 12 3 7 8"></polyline>
+          <line x1="12" y1="3" x2="12" y2="15"></line>
+        </svg>
+        <p><strong>Glissez votre fichier ici</strong></p>
+        <p class="muted">ou cliquez pour parcourir &mdash; formats acceptés : .xlsx, .xls, .ods, .csv</p>
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.ods,.csv" hidden>
+      </div>
+    </section>
+
+    <section id="stepColumn" class="hidden">
+      <div class="card">
+        <h3>Fichier chargé : <span id="fileName" class="mono"></span></h3>
+        <p class="muted">Choisissez la feuille et la colonne contenant les numéros de TVA :</p>
+        <div class="row">
+          <label>
+            <span>Feuille</span>
+            <select id="sheetSelect"></select>
+          </label>
+          <label>
+            <span>Colonne TVA</span>
+            <select id="columnSelect"></select>
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="hasHeader" checked>
+            <span>La 1<sup>re</sup> ligne est un en-tête</span>
+          </label>
+        </div>
+        <div id="previewWrap">
+          <p class="muted small">Aperçu des 5 premières valeurs&nbsp;:</p>
+          <ul id="preview" class="preview"></ul>
+        </div>
+        <div class="actions">
+          <button id="resetBtn" class="btn-secondary">Changer de fichier</button>
+          <button id="checkBtn" class="btn-primary">Vérifier <span id="checkCount"></span></button>
+        </div>
+      </div>
+    </section>
+
+    <section id="stepProgress" class="hidden">
+      <div class="card">
+        <h3>Vérification en cours&hellip;</h3>
+        <div class="progress-wrap">
+          <div id="progressBar" class="progress-bar"></div>
+        </div>
+        <p id="progressText" class="muted">0 / 0</p>
+        <button id="cancelBtn" class="btn-secondary">Annuler</button>
+      </div>
+    </section>
+
+    <section id="stepResults" class="hidden">
+      <div class="summary">
+        <div class="stat stat-ok">
+          <span class="stat-value" id="statOk">0</span>
+          <span class="stat-label">Valides</span>
+        </div>
+        <div class="stat stat-ko">
+          <span class="stat-value" id="statKo">0</span>
+          <span class="stat-label">À corriger</span>
+        </div>
+        <div class="stat stat-warn">
+          <span class="stat-value" id="statErr">0</span>
+          <span class="stat-label">Erreurs réseau</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="results-head">
+          <h3>Résultat</h3>
+          <div class="filters">
+            <label class="checkbox"><input type="checkbox" id="filterOnlyProblems" checked><span>N'afficher que les problèmes</span></label>
+            <button id="retryBtn" class="btn-secondary small">Réessayer les échecs</button>
+            <button id="copyBtn" class="btn-secondary small">Copier la liste</button>
+            <button id="restartBtn" class="btn-secondary small">Nouveau fichier</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="resultsTable">
+            <thead>
+              <tr>
+                <th>Ligne Excel</th>
+                <th>Numéro TVA</th>
+                <th>Statut</th>
+                <th>Détail</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <p class="muted small">Source : <a href="https://ec.europa.eu/taxation_customs/vies/#/vat-validation" target="_blank" rel="noopener">VIES &mdash; Commission européenne</a>. Aucun envoi vers un tiers.</p>
+    </footer>
+  </div>
+
+  <script src="lib/xlsx.mini.min.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
