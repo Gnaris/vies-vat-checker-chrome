@@ -1,458 +1,595 @@
 "use strict";
 
-const VIES_ENDPOINT = "https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number";
-const CONCURRENCY = 4;
-const RETRY_DELAYS_MS = [600, 1800, 4500];
-
-const EU_COUNTRIES = new Set([
-  "AT","BE","BG","CY","CZ","DE","DK","EE","EL","ES","FI","FR","HR","HU",
-  "IE","IT","LT","LU","LV","MT","NL","PL","PT","RO","SE","SI","SK","XI"
-]);
-
-const els = {
-  dropZone: document.getElementById("dropZone"),
-  fileInput: document.getElementById("fileInput"),
-  stepUpload: document.getElementById("stepUpload"),
-  stepColumn: document.getElementById("stepColumn"),
-  stepProgress: document.getElementById("stepProgress"),
-  stepResults: document.getElementById("stepResults"),
-  fileName: document.getElementById("fileName"),
-  sheetSelect: document.getElementById("sheetSelect"),
-  columnSelect: document.getElementById("columnSelect"),
-  hasHeader: document.getElementById("hasHeader"),
-  preview: document.getElementById("preview"),
-  checkBtn: document.getElementById("checkBtn"),
-  checkCount: document.getElementById("checkCount"),
-  resetBtn: document.getElementById("resetBtn"),
-  progressBar: document.getElementById("progressBar"),
-  progressText: document.getElementById("progressText"),
-  cancelBtn: document.getElementById("cancelBtn"),
-  statOk: document.getElementById("statOk"),
-  statKo: document.getElementById("statKo"),
-  statErr: document.getElementById("statErr"),
-  resultsTable: document.getElementById("resultsTable").querySelector("tbody"),
-  filterOnlyProblems: document.getElementById("filterOnlyProblems"),
-  retryBtn: document.getElementById("retryBtn"),
-  copyBtn: document.getElementById("copyBtn"),
-  restartBtn: document.getElementById("restartBtn"),
+const state = {
+  parsedSage: null,
+  selectedPeriod: null,
+  cancelRequested: false,
+  lastClassification: null,
+  lastEntries: [],
+  lastPeriodKey: null,
+  editingArticleCode: null
 };
 
-let workbook = null;
-let currentFileName = "";
-let currentSheetName = "";
-let sheetRows = [];
-let cancelRequested = false;
-let lastResults = [];
+const $ = (id) => document.getElementById(id);
+const clearNode = (node) => { while (node.firstChild) node.removeChild(node.firstChild); };
 
-function clearNode(node) {
-  while (node.firstChild) node.removeChild(node.firstChild);
-}
+document.addEventListener("DOMContentLoaded", async () => {
+  setupTabs();
+  setupConfigTab();
+  setupArticlesTab();
+  setupDeclarationTab();
+  await refreshConfigBanner();
+  await renderArticlesTable();
+});
 
-function showStep(name) {
-  ["stepUpload", "stepColumn", "stepProgress", "stepResults"].forEach(k => {
-    els[k].classList.toggle("hidden", k !== name);
+// =====================================================================
+// Tabs navigation
+// =====================================================================
+function setupTabs() {
+  document.querySelectorAll(".tab").forEach(btn => {
+    btn.addEventListener("click", () => activateTab(btn.dataset.tab));
+  });
+  document.querySelectorAll("[data-goto]").forEach(btn => {
+    btn.addEventListener("click", () => activateTab(btn.dataset.goto));
   });
 }
 
-els.dropZone.addEventListener("click", () => els.fileInput.click());
-els.fileInput.addEventListener("change", e => {
-  if (e.target.files.length) loadFile(e.target.files[0]);
-});
-
-["dragenter", "dragover"].forEach(ev => {
-  els.dropZone.addEventListener(ev, e => {
-    e.preventDefault();
-    els.dropZone.classList.add("dragover");
+function activateTab(tabId) {
+  document.querySelectorAll(".tab").forEach(t => {
+    t.classList.toggle("active", t.dataset.tab === tabId);
   });
-});
-["dragleave", "drop"].forEach(ev => {
-  els.dropZone.addEventListener(ev, e => {
-    e.preventDefault();
-    els.dropZone.classList.remove("dragover");
+  document.querySelectorAll(".tab-panel").forEach(p => {
+    p.classList.toggle("active", p.id === tabId);
   });
-});
-els.dropZone.addEventListener("drop", e => {
-  const f = e.dataTransfer.files[0];
-  if (f) loadFile(f);
-});
+}
 
-async function loadFile(file) {
+// =====================================================================
+// Configuration tab
+// =====================================================================
+function setupConfigTab() {
+  $("cfgSaveBtn").addEventListener("click", saveConfig);
+  loadConfigIntoForm();
+}
+
+async function loadConfigIntoForm() {
+  const d = await window.Store.getDeclarant();
+  $("cfgNomEntreprise").value = d.nomEntreprise || "";
+  $("cfgNii").value = d.nii || "";
+  $("cfgDepartement").value = d.departement || "";
+}
+
+async function saveConfig() {
+  const declarant = {
+    nomEntreprise: $("cfgNomEntreprise").value.trim(),
+    nii: $("cfgNii").value.trim().toUpperCase().replace(/\s/g, ""),
+    departement: $("cfgDepartement").value.trim()
+  };
+  const errors = window.Validators.validateDeclarant(declarant);
+  const errEl = $("cfgError");
+  const okEl = $("cfgSaved");
+  if (errors.length) {
+    errEl.textContent = "⚠ " + errors.join(" · ");
+    errEl.classList.remove("hidden");
+    okEl.classList.add("hidden");
+    return;
+  }
+  await window.Store.saveDeclarant(declarant);
+  $("cfgNii").value = declarant.nii;
+  errEl.classList.add("hidden");
+  okEl.classList.remove("hidden");
+  setTimeout(() => okEl.classList.add("hidden"), 2500);
+  await refreshConfigBanner();
+}
+
+async function refreshConfigBanner() {
+  const declarant = await window.Store.getDeclarant();
+  const errors = window.Validators.validateDeclarant(declarant);
+  const articles = await window.Store.getArticles();
+  const nArticles = Object.keys(articles).length;
+
+  const banner = $("declBanner");
+  const detail = $("declBannerDetail");
+  const missing = [];
+  if (errors.length) missing.push("configuration déclarant (nom, NII, département)");
+  if (nArticles === 0) missing.push("aucun article mappé");
+
+  if (missing.length) {
+    detail.textContent = " À compléter avant de pouvoir générer une déclaration : " + missing.join(" · ") + ".";
+    banner.classList.remove("hidden");
+  } else {
+    banner.classList.add("hidden");
+  }
+}
+
+// =====================================================================
+// Articles tab
+// =====================================================================
+function setupArticlesTab() {
+  $("addArticleBtn").addEventListener("click", () => openArticleModal(null));
+  $("articleCancelBtn").addEventListener("click", closeArticleModal);
+  $("articleSaveBtn").addEventListener("click", saveArticleFromModal);
+  $("importArticlesBtn").addEventListener("click", () => $("articlesFileInput").click());
+  $("articlesFileInput").addEventListener("change", handleArticlesImport);
+  $("exportArticlesBtn").addEventListener("click", exportArticlesExcel);
+  $("articleSearch").addEventListener("input", renderArticlesTable);
+}
+
+async function renderArticlesTable() {
+  const articles = await window.Store.getArticles();
+  const tbody = $("articlesTable").querySelector("tbody");
+  const empty = $("articlesEmpty");
+  const filter = $("articleSearch").value.trim().toLowerCase();
+  clearNode(tbody);
+
+  const keys = Object.keys(articles).sort();
+  if (keys.length === 0) {
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+
+  const filtered = keys.filter(k => {
+    if (!filter) return true;
+    const a = articles[k];
+    return (k.toLowerCase().includes(filter)
+      || (a.description || "").toLowerCase().includes(filter)
+      || (a.codeSH || "").toLowerCase().includes(filter)
+      || (a.paysOrigine || "").toLowerCase().includes(filter));
+  });
+
+  filtered.forEach(code => {
+    const a = articles[code];
+    const tr = document.createElement("tr");
+    [code, a.description || "", a.codeSH || "", a.paysOrigine || "", a.poidsNet || 0].forEach(v => {
+      const td = document.createElement("td");
+      td.textContent = String(v);
+      if (v === code || a.codeSH === v) td.classList.add("mono");
+      tr.appendChild(td);
+    });
+    const tdAct = document.createElement("td");
+    const editBtn = document.createElement("button");
+    editBtn.className = "btn-icon";
+    editBtn.textContent = "Modifier";
+    editBtn.addEventListener("click", () => openArticleModal(code));
+    const delBtn = document.createElement("button");
+    delBtn.className = "btn-icon danger";
+    delBtn.textContent = "Supprimer";
+    delBtn.addEventListener("click", () => deleteArticleWithConfirm(code));
+    tdAct.appendChild(editBtn);
+    tdAct.appendChild(delBtn);
+    tr.appendChild(tdAct);
+    tbody.appendChild(tr);
+  });
+}
+
+async function openArticleModal(code) {
+  state.editingArticleCode = code;
+  $("articleFormError").classList.add("hidden");
+  if (code) {
+    const articles = await window.Store.getArticles();
+    const a = articles[code] || {};
+    $("articleModalTitle").textContent = `Modifier ${code}`;
+    $("articleCode").value = code;
+    $("articleCode").disabled = true;
+    $("articleDescription").value = a.description || "";
+    $("articleCodeSH").value = a.codeSH || "";
+    $("articlePaysOrigine").value = a.paysOrigine || "";
+    $("articlePoidsNet").value = a.poidsNet || "";
+  } else {
+    $("articleModalTitle").textContent = "Ajouter un article";
+    $("articleCode").value = "";
+    $("articleCode").disabled = false;
+    $("articleDescription").value = "";
+    $("articleCodeSH").value = "";
+    $("articlePaysOrigine").value = "";
+    $("articlePoidsNet").value = "";
+  }
+  $("articleModal").classList.remove("hidden");
+}
+
+function closeArticleModal() {
+  $("articleModal").classList.add("hidden");
+  state.editingArticleCode = null;
+}
+
+async function saveArticleFromModal() {
+  const code = $("articleCode").value.trim();
+  const description = $("articleDescription").value.trim();
+  const codeSH = $("articleCodeSH").value.trim().replace(/\s/g, "");
+  const paysOrigine = $("articlePaysOrigine").value.trim().toUpperCase();
+  const poidsRaw = String($("articlePoidsNet").value).replace(",", ".").trim();
+  const poidsNet = parseFloat(poidsRaw);
+
+  const errs = [];
+  if (!code) errs.push("Code article obligatoire");
+  if (!codeSH) errs.push("Code SH8 obligatoire (8 chiffres, ex. 71171900)");
+  else if (!/^\d{6,10}$/.test(codeSH)) errs.push(`Code SH8 invalide : "${codeSH}" — attendu 6 à 10 chiffres`);
+  if (!paysOrigine) errs.push("Pays d'origine obligatoire (2 lettres, ex. IT)");
+  else if (!/^[A-Z]{2}$/.test(paysOrigine)) errs.push(`Pays d'origine invalide : "${paysOrigine}" — attendu 2 lettres (ex. IT, DE, CN)`);
+  if (!poidsRaw) errs.push("Poids net obligatoire (ex. 0.020 pour 20 grammes)");
+  else if (!isFinite(poidsNet) || poidsNet <= 0) errs.push(`Poids net invalide : "${poidsRaw}" — attendu un nombre décimal avec point (ex. 0.020)`);
+
+  const el = $("articleFormError");
+  if (errs.length) {
+    clearNode(el);
+    const strong = document.createElement("strong");
+    strong.textContent = "⚠ Impossible d'enregistrer :";
+    el.appendChild(strong);
+    const ul = document.createElement("ul");
+    ul.style.margin = "6px 0 0 20px";
+    errs.forEach(e => {
+      const li = document.createElement("li");
+      li.textContent = e;
+      ul.appendChild(li);
+    });
+    el.appendChild(ul);
+    el.classList.remove("hidden");
+    el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    return;
+  }
+  el.classList.add("hidden");
+
+  await window.Store.upsertArticle(code, { description, codeSH, paysOrigine, poidsNet });
+  closeArticleModal();
+  await renderArticlesTable();
+  await refreshConfigBanner();
+}
+
+async function deleteArticleWithConfirm(code) {
+  if (!confirm(`Supprimer l'article "${code}" ?`)) return;
+  await window.Store.deleteArticle(code);
+  await renderArticlesTable();
+  await refreshConfigBanner();
+}
+
+async function handleArticlesImport(ev) {
+  const file = ev.target.files[0];
+  if (!file) return;
   try {
-    currentFileName = file.name;
     const buf = await file.arrayBuffer();
-    workbook = XLSX.read(buf, { type: "array" });
-    if (!workbook.SheetNames.length) throw new Error("Fichier vide.");
-    els.fileName.textContent = file.name;
-    populateSheetSelect();
-    onSheetChange();
-    showStep("stepColumn");
+    const wb = XLSX.read(buf, { type: "array" });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: "" });
+    if (!rows.length) throw new Error("Fichier vide.");
+
+    const headerRow = rows[0].map(h => String(h).toLowerCase().trim());
+    const colCode = headerRow.findIndex(h => h.includes("code article") || h === "code");
+    const colDesc = headerRow.findIndex(h => h.includes("description") || h.includes("libell"));
+    const colSH = headerRow.findIndex(h => h.includes("sh") || h.includes("nomenclat"));
+    const colPays = headerRow.findIndex(h => h.includes("origine") || h.includes("pays"));
+    const colPoids = headerRow.findIndex(h => h.includes("poids") || h.includes("kg"));
+
+    if (colCode < 0 || colSH < 0 || colPays < 0 || colPoids < 0) {
+      throw new Error("Colonnes attendues : Code article, Description, Code SH, Pays origine, Poids net. Une ou plusieurs sont manquantes.");
+    }
+
+    const articles = await window.Store.getArticles();
+    let imported = 0;
+    let skipped = 0;
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i];
+      const code = String(r[colCode] || "").trim();
+      if (!code) continue;
+      const codeSH = String(r[colSH] || "").trim().replace(/\s/g, "");
+      const paysOrigine = String(r[colPays] || "").trim().toUpperCase();
+      const poidsNet = parseFloat(String(r[colPoids] || "").replace(",", "."));
+      const description = colDesc >= 0 ? String(r[colDesc] || "").trim() : "";
+      if (!/^\d{6,10}$/.test(codeSH) || !/^[A-Z]{2}$/.test(paysOrigine) || !isFinite(poidsNet) || poidsNet <= 0) {
+        skipped++;
+        continue;
+      }
+      articles[code] = { description, codeSH, paysOrigine, poidsNet };
+      imported++;
+    }
+    await window.Store.saveArticles(articles);
+    await renderArticlesTable();
+    await refreshConfigBanner();
+    alert(`Import terminé : ${imported} article(s) enregistré(s), ${skipped} ligne(s) ignorée(s).`);
+  } catch (err) {
+    alert("Erreur import : " + err.message);
+  } finally {
+    ev.target.value = "";
+  }
+}
+
+async function exportArticlesExcel() {
+  const articles = await window.Store.getArticles();
+  const keys = Object.keys(articles).sort();
+  if (keys.length === 0) {
+    alert("Aucun article à exporter.");
+    return;
+  }
+  const aoa = [["Code article", "Description", "Code SH8", "Pays origine", "Poids net (kg)"]];
+  keys.forEach(k => {
+    const a = articles[k];
+    aoa.push([k, a.description || "", a.codeSH, a.paysOrigine, a.poidsNet]);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Articles");
+  const bytes = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  const blob = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  window.Generators.triggerDownload(blob, "articles_mapping.xlsx");
+}
+
+// =====================================================================
+// Declaration tab
+// =====================================================================
+function setupDeclarationTab() {
+  const dz = $("sageDropZone");
+  const fi = $("sageFileInput");
+  dz.addEventListener("click", () => fi.click());
+  fi.addEventListener("change", e => { if (e.target.files.length) loadSageFile(e.target.files[0]); });
+  ["dragenter", "dragover"].forEach(ev => {
+    dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add("dragover"); });
+  });
+  ["dragleave", "drop"].forEach(ev => {
+    dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove("dragover"); });
+  });
+  dz.addEventListener("drop", e => {
+    const f = e.dataTransfer.files[0];
+    if (f) loadSageFile(f);
+  });
+  $("sageResetBtn").addEventListener("click", resetSage);
+  $("restartBtn").addEventListener("click", resetSage);
+  $("restartBlockedBtn").addEventListener("click", resetSage);
+  $("analyzeBtn").addEventListener("click", startAnalysis);
+  $("cancelAnalyzeBtn").addEventListener("click", () => { state.cancelRequested = true; });
+  $("periodShowAll").addEventListener("change", renderPeriodPreview);
+  $("periodSelect").addEventListener("change", renderPeriodPreview);
+  $("downloadErtvaBtn").addEventListener("click", downloadErtva);
+  $("downloadDebBtn").addEventListener("click", downloadDeb);
+  $("okShowIgnoredBtn").addEventListener("click", showIgnoredInline);
+}
+
+function showStep(stepId) {
+  ["stepSageUpload","stepSagePeriod","stepAnalyze","stepResultOk","stepResultBlocked"].forEach(id => {
+    $(id).classList.toggle("hidden", id !== stepId);
+  });
+}
+
+function resetSage() {
+  state.parsedSage = null;
+  state.selectedPeriod = null;
+  state.lastClassification = null;
+  state.lastEntries = [];
+  state.lastPeriodKey = null;
+  $("sageFileInput").value = "";
+  showStep("stepSageUpload");
+}
+
+async function loadSageFile(file) {
+  try {
+    const buf = await file.arrayBuffer();
+    const parsed = window.Sage.parseSageTxt(buf);
+    if (parsed.warnings.length) {
+      alert("Problèmes détectés dans le fichier :\n\n" + parsed.warnings.join("\n"));
+      return;
+    }
+    if (!parsed.factures.length) {
+      alert("Aucune facture détectée dans le fichier.");
+      return;
+    }
+    state.parsedSage = parsed;
+    $("sageFileName").textContent = file.name;
+    populatePeriodSelect();
+    updateSageSummary();
+    renderPeriodPreview();
+    showStep("stepSagePeriod");
   } catch (err) {
     alert("Impossible de lire le fichier : " + err.message);
     console.error(err);
   }
 }
 
-function populateSheetSelect() {
-  clearNode(els.sheetSelect);
-  workbook.SheetNames.forEach(name => {
+function populatePeriodSelect() {
+  const periods = window.Validators.detectPeriods(state.parsedSage.factures);
+  const sel = $("periodSelect");
+  clearNode(sel);
+  if (periods.length === 0) {
     const opt = document.createElement("option");
-    opt.value = name;
-    opt.textContent = name;
-    els.sheetSelect.appendChild(opt);
-  });
-}
-
-els.sheetSelect.addEventListener("change", onSheetChange);
-els.hasHeader.addEventListener("change", refreshPreview);
-els.columnSelect.addEventListener("change", refreshPreview);
-els.resetBtn.addEventListener("click", resetAll);
-els.restartBtn.addEventListener("click", resetAll);
-
-function onSheetChange() {
-  currentSheetName = els.sheetSelect.value;
-  const sheet = workbook.Sheets[currentSheetName];
-  sheetRows = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: "" });
-  populateColumnSelect();
-  refreshPreview();
-}
-
-function columnLetter(index) {
-  let s = "";
-  let n = index;
-  while (n >= 0) {
-    s = String.fromCharCode(65 + (n % 26)) + s;
-    n = Math.floor(n / 26) - 1;
-  }
-  return s;
-}
-
-function populateColumnSelect() {
-  clearNode(els.columnSelect);
-  const width = sheetRows.reduce((m, r) => Math.max(m, r.length), 0);
-  const header = sheetRows[0] || [];
-  let guessed = -1;
-  for (let i = 0; i < width; i++) {
-    const opt = document.createElement("option");
-    opt.value = String(i);
-    const headText = (header[i] || "").toString().trim();
-    opt.textContent = headText
-      ? `${columnLetter(i)} — ${headText}`
-      : `Colonne ${columnLetter(i)}`;
-    els.columnSelect.appendChild(opt);
-    if (guessed < 0 && /tva|vat|vies/i.test(headText)) guessed = i;
-  }
-  if (guessed < 0) {
-    for (let i = 0; i < width && guessed < 0; i++) {
-      for (let r = 1; r < Math.min(sheetRows.length, 6); r++) {
-        const cell = (sheetRows[r][i] || "").toString().trim().toUpperCase();
-        if (/^[A-Z]{2}[A-Z0-9]{6,14}$/.test(cell)) { guessed = i; break; }
-      }
-    }
-  }
-  els.columnSelect.value = String(guessed >= 0 ? guessed : 0);
-}
-
-function refreshPreview() {
-  const colIdx = parseInt(els.columnSelect.value, 10);
-  const startRow = els.hasHeader.checked ? 1 : 0;
-  const values = [];
-  for (let r = startRow; r < sheetRows.length && values.length < 5; r++) {
-    const v = (sheetRows[r][colIdx] || "").toString().trim();
-    if (v) values.push({ row: r + 1, val: v });
-  }
-  clearNode(els.preview);
-  if (!values.length) {
-    const li = document.createElement("li");
-    li.className = "muted";
-    li.textContent = "(colonne vide)";
-    els.preview.appendChild(li);
-    els.checkBtn.disabled = true;
-    els.checkCount.textContent = "";
+    opt.value = "";
+    opt.textContent = "(aucune facture UE datée)";
+    sel.appendChild(opt);
+    sel.disabled = true;
+    $("analyzeBtn").disabled = true;
     return;
   }
-  values.forEach(({ row, val }) => {
-    const li = document.createElement("li");
-    li.textContent = `Ligne ${row} : ${val}`;
-    els.preview.appendChild(li);
+  sel.disabled = false;
+  $("analyzeBtn").disabled = false;
+  periods.forEach(([key, count]) => {
+    const opt = document.createElement("option");
+    opt.value = key;
+    opt.textContent = `${window.Sage.periodLabel(key)} — ${count} facture(s) UE`;
+    sel.appendChild(opt);
   });
-  const total = countTargets(colIdx, startRow);
-  els.checkCount.textContent = `(${total})`;
-  els.checkBtn.disabled = total === 0;
+  sel.value = periods[0][0];
 }
 
-function countTargets(colIdx, startRow) {
-  let n = 0;
-  for (let r = startRow; r < sheetRows.length; r++) {
-    const v = (sheetRows[r][colIdx] || "").toString().trim();
-    if (v) n++;
-  }
-  return n;
+function updateSageSummary() {
+  const all = state.parsedSage.factures;
+  const dated = all.filter(f => f.date);
+  const dates = dated.map(f => f.date.getTime()).sort();
+  const first = dates[0] ? new Date(dates[0]) : null;
+  const last = dates[dates.length - 1] ? new Date(dates[dates.length - 1]) : null;
+  const rangeTxt = (first && last)
+    ? `du ${first.toLocaleDateString("fr-FR")} au ${last.toLocaleDateString("fr-FR")}`
+    : "";
+  $("sageSummary").textContent = `${all.length} pièce(s) détectée(s) ${rangeTxt}.`;
 }
 
-els.checkBtn.addEventListener("click", startCheck);
-els.cancelBtn.addEventListener("click", () => { cancelRequested = true; });
-
-async function startCheck() {
-  const colIdx = parseInt(els.columnSelect.value, 10);
-  const startRow = els.hasHeader.checked ? 1 : 0;
-  const targets = [];
-  for (let r = startRow; r < sheetRows.length; r++) {
-    const v = (sheetRows[r][colIdx] || "").toString().trim();
-    if (v) targets.push({ excelRow: r + 1, raw: v });
+function renderPeriodPreview() {
+  const showAll = $("periodShowAll").checked;
+  const key = $("periodSelect").value;
+  const pv = $("periodPreview");
+  clearNode(pv);
+  if (!showAll) {
+    pv.classList.add("hidden");
+    return;
   }
-  if (!targets.length) return;
-
-  cancelRequested = false;
-  showStep("stepProgress");
-  els.progressBar.style.width = "0%";
-  els.progressText.textContent = `0 / ${targets.length}`;
-
-  const results = new Array(targets.length);
-  let done = 0;
-
-  async function processOne(i) {
-    if (cancelRequested) return;
-    const t = targets[i];
-    const parsed = parseVat(t.raw);
-    let r;
-    if (!parsed) {
-      r = { ...t, status: "invalid-format", detail: "Format inconnu (attendu : 2 lettres pays + chiffres)" };
-    } else {
-      r = { ...t, country: parsed.country, number: parsed.number };
-      const remote = await checkViesWithRetry(parsed.country, parsed.number);
-      Object.assign(r, remote);
-    }
-    results[i] = r;
-    done++;
-    const pct = Math.round((done / targets.length) * 100);
-    els.progressBar.style.width = pct + "%";
-    els.progressText.textContent = `${done} / ${targets.length}`;
-  }
-
-  await runWithConcurrency(targets.length, CONCURRENCY, processOne);
-
-  lastResults = results.filter(Boolean);
-  renderResults();
-  showStep("stepResults");
+  pv.classList.remove("hidden");
+  const factures = key
+    ? window.Validators.filterByPeriod(state.parsedSage.factures, key)
+    : state.parsedSage.factures;
+  factures.forEach(f => {
+    const iso2 = window.EU.iso3ToIso2(f.paysCodeRaw);
+    const div = document.createElement("div");
+    div.textContent = `${f.typePiece} ${f.numero} — ${f.dateRaw} — ${f.nomClient} (${iso2 || f.paysCodeRaw}) — NII ${f.nii || "(vide)"} — ${f.mtTTC.toFixed(2)}€ TTC`;
+    pv.appendChild(div);
+  });
 }
 
-function parseVat(raw) {
-  const cleaned = raw.toUpperCase().replace(/[\s.\-/]/g, "");
-  const m = cleaned.match(/^([A-Z]{2})([A-Z0-9]+)$/);
-  if (!m) return null;
-  const country = m[1] === "GR" ? "EL" : m[1];
-  return { country, number: m[2] };
-}
-
-async function runWithConcurrency(total, limit, worker) {
-  let next = 0;
-  async function runner() {
-    while (next < total && !cancelRequested) {
-      const i = next++;
-      await worker(i);
-    }
+async function startAnalysis() {
+  const declarant = await window.Store.getDeclarant();
+  const declErrors = window.Validators.validateDeclarant(declarant);
+  if (declErrors.length) {
+    alert("Configuration déclarant incomplète :\n\n" + declErrors.join("\n") + "\n\nAllez dans l'onglet Configuration.");
+    activateTab("tabConfig");
+    return;
   }
-  const runners = [];
-  for (let k = 0; k < Math.min(limit, total); k++) runners.push(runner());
-  await Promise.all(runners);
-}
-
-async function checkViesWithRetry(country, number) {
-  let last = null;
-  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
-    if (cancelRequested) return { status: "network-error", detail: "Annulé" };
-    last = await checkVies(country, number);
-    if (last.status !== "network-error") return last;
-    if (attempt < RETRY_DELAYS_MS.length) {
-      await sleep(RETRY_DELAYS_MS[attempt]);
-    }
+  const articles = await window.Store.getArticles();
+  if (Object.keys(articles).length === 0) {
+    alert("Aucun article mappé. Allez dans l'onglet Articles pour ajouter au moins un code SH avant de continuer.");
+    activateTab("tabArticles");
+    return;
   }
-  return {
-    ...last,
-    detail: `${last.detail} — 3 essais échoués, vérifier manuellement sur VIES`
-  };
-}
 
-async function checkVies(country, number) {
-  if (!EU_COUNTRIES.has(country)) {
-    return { status: "invalid-country", detail: `Code pays "${country}" non couvert par VIES` };
+  const periodKey = $("periodSelect").value;
+  if (!periodKey) {
+    alert("Aucune période à déclarer.");
+    return;
   }
-  try {
-    const resp = await fetch(VIES_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({
-        countryCode: country,
-        vatNumber: number,
-        requesterMemberStateCode: "",
-        requesterNumber: "",
-        traderName: "",
-        traderStreet: "",
-        traderPostalCode: "",
-        traderCity: "",
-        traderCompanyType: ""
-      })
+  state.selectedPeriod = periodKey;
+  state.cancelRequested = false;
+
+  const facturesPeriode = window.Validators.filterByPeriod(state.parsedSage.factures, periodKey);
+  const niis = window.Validators.collectCandidateNiis(facturesPeriode);
+
+  showStep("stepAnalyze");
+  $("analyzeTitle").textContent = niis.length
+    ? "Vérification des NII sur VIES…"
+    : "Analyse des factures…";
+  $("analyzeBar").style.width = "0%";
+  $("analyzeText").textContent = `0 / ${niis.length}`;
+
+  const viesResults = {};
+  if (niis.length > 0) {
+    let done = 0;
+    await window.Vies.runWithConcurrency(niis.length, window.Vies.CONCURRENCY, async (i) => {
+      const full = niis[i];
+      const country = full.slice(0, 2);
+      const number = full.slice(2);
+      const r = await window.Vies.checkViesWithRetry(country, number, () => state.cancelRequested);
+      viesResults[full] = r;
+      done++;
+      const pct = Math.round(done / niis.length * 100);
+      $("analyzeBar").style.width = pct + "%";
+      $("analyzeText").textContent = `${done} / ${niis.length}`;
+    }, () => state.cancelRequested);
+  }
+
+  if (state.cancelRequested) {
+    resetSage();
+    return;
+  }
+
+  const classification = window.Validators.classifyFactures(facturesPeriode, articles, viesResults);
+  state.lastClassification = classification;
+  state.lastEntries = classification.toDeclare;
+  state.lastPeriodKey = periodKey;
+
+  if (classification.blockers.length > 0) {
+    renderBlocked(classification);
+    showStep("stepResultBlocked");
+  } else if (classification.toDeclare.length === 0) {
+    renderBlocked({
+      blockers: [{ message: "Aucune facture éligible à la déclaration LIC sur cette période (ni facture, ni avoir intracom valide)." }],
+      ignored: classification.ignored
     });
-    if (!resp.ok) {
-      return { status: "network-error", detail: `HTTP ${resp.status}` };
-    }
-    const data = await resp.json();
-    const errCode = data.userError || data.errorWrappers?.[0]?.error || data.actionSucceed === false && "SERVICE_ERROR";
-    if (errCode) {
-      return { status: "network-error", detail: viesErrorLabel(errCode) };
-    }
-    if (data.valid === true) {
-      const name = (data.traderName || data.name || "").toString().trim();
-      return { status: "valid", detail: name || "Numéro valide" };
-    }
-    return { status: "invalid", detail: "Numéro non reconnu par VIES" };
-  } catch (err) {
-    return { status: "network-error", detail: err.message || "Erreur réseau" };
+    showStep("stepResultBlocked");
+  } else {
+    renderOk(classification, periodKey);
+    showStep("stepResultOk");
   }
 }
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function renderOk(cls, periodKey) {
+  const uniqueNiis = new Set(cls.toDeclare.map(e => e.niiClient));
+  $("okDeclared").textContent = cls.toDeclare.length;
+  $("okIgnored").textContent = cls.ignored.length;
+  $("okNiiCount").textContent = uniqueNiis.size;
+  $("okPeriodLabel").textContent = window.Sage.periodLabel(periodKey);
 
-els.filterOnlyProblems.addEventListener("change", renderResults);
-els.copyBtn.addEventListener("click", copyProblems);
-els.retryBtn.addEventListener("click", retryFailed);
+  const tbody = $("declaredTable").querySelector("tbody");
+  clearNode(tbody);
+  cls.toDeclare
+    .slice()
+    .sort((a, b) => (a.facture.date?.getTime() || 0) - (b.facture.date?.getTime() || 0))
+    .forEach(e => {
+      const f = e.facture;
+      const tr = document.createElement("tr");
+      if (e.role === "avoir") tr.classList.add("row-avoir");
+      const ht = f.lignes.reduce((s, l) => s + l.quantite * l.puHT, 0);
+      const signedHt = e.role === "avoir" ? -Math.abs(ht) : ht;
+      const cells = [
+        f.numero,
+        e.role === "avoir" ? "Avoir" : "Facture",
+        f.dateRaw,
+        f.nomClient,
+        e.iso2Client,
+        f.nii,
+        signedHt.toFixed(2) + " €"
+      ];
+      cells.forEach((v, i) => {
+        const td = document.createElement("td");
+        td.textContent = v;
+        if (i === 0 || i === 5) td.classList.add("mono");
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+}
 
-async function retryFailed() {
-  const failedIndexes = lastResults
-    .map((r, i) => (r.status === "network-error" ? i : -1))
-    .filter(i => i >= 0);
-  if (!failedIndexes.length) {
-    els.retryBtn.textContent = "Aucun échec";
-    setTimeout(() => els.retryBtn.textContent = "Réessayer les échecs", 1500);
-    return;
-  }
-  els.retryBtn.disabled = true;
-  const originalLabel = "Réessayer les échecs";
-  let done = 0;
-  cancelRequested = false;
-  await runWithConcurrency(failedIndexes.length, CONCURRENCY, async (k) => {
-    const i = failedIndexes[k];
-    const r = lastResults[i];
-    const parsed = parseVat(r.raw);
-    if (parsed) {
-      const remote = await checkViesWithRetry(parsed.country, parsed.number);
-      lastResults[i] = { ...r, ...remote, country: parsed.country, number: parsed.number };
-    }
-    done++;
-    els.retryBtn.textContent = `Réessai ${done} / ${failedIndexes.length}…`;
-    renderResults();
+function renderBlocked(cls) {
+  $("blockedCount").textContent = cls.blockers.length;
+  const ul = $("blockersList");
+  clearNode(ul);
+  cls.blockers.forEach(b => {
+    const li = document.createElement("li");
+    li.textContent = b.message;
+    ul.appendChild(li);
   });
-  els.retryBtn.disabled = false;
-  els.retryBtn.textContent = originalLabel;
-}
-
-function renderResults() {
-  const onlyProblems = els.filterOnlyProblems.checked;
-  const okCount = lastResults.filter(r => r.status === "valid").length;
-  const koCount = lastResults.filter(r => r.status === "invalid" || r.status === "invalid-format" || r.status === "invalid-country").length;
-  const errCount = lastResults.filter(r => r.status === "network-error").length;
-  els.statOk.textContent = okCount;
-  els.statKo.textContent = koCount;
-  els.statErr.textContent = errCount;
-
-  clearNode(els.resultsTable);
-  const shown = onlyProblems ? lastResults.filter(r => r.status !== "valid") : lastResults;
-  if (!shown.length) {
-    const tr = document.createElement("tr");
-    const td = document.createElement("td");
-    td.colSpan = 4;
-    td.className = "muted";
-    td.style.textAlign = "center";
-    td.style.padding = "24px";
-    td.textContent = onlyProblems
-      ? "Aucun problème détecté. Tous les numéros de TVA sont valides."
-      : "Aucun résultat.";
-    tr.appendChild(td);
-    els.resultsTable.appendChild(tr);
-    return;
-  }
-  shown.forEach(r => {
-    const tr = document.createElement("tr");
-    if (r.status === "valid") tr.classList.add("row-ok");
-    else if (r.status === "network-error") tr.classList.add("row-err");
-    else tr.classList.add("row-ko");
-
-    const c1 = document.createElement("td");
-    c1.textContent = r.excelRow;
-    tr.appendChild(c1);
-
-    const c2 = document.createElement("td");
-    c2.className = "mono";
-    c2.textContent = r.raw;
-    tr.appendChild(c2);
-
-    const c3 = document.createElement("td");
-    const badge = document.createElement("span");
-    badge.className = "badge " + (r.status === "valid" ? "badge-ok" : r.status === "network-error" ? "badge-warn" : "badge-ko");
-    badge.textContent = statusLabel(r.status);
-    c3.appendChild(badge);
-    tr.appendChild(c3);
-
-    const c4 = document.createElement("td");
-    c4.textContent = r.detail || "";
-    tr.appendChild(c4);
-
-    els.resultsTable.appendChild(tr);
+  const igEl = $("ignoredList");
+  clearNode(igEl);
+  const ignored = cls.ignored || [];
+  $("ignoredCount").textContent = ignored.length ? `(${ignored.length})` : "";
+  $("ignoredCard").classList.toggle("hidden", ignored.length === 0);
+  ignored.forEach(i => {
+    const li = document.createElement("li");
+    const f = i.facture;
+    li.textContent = `${f.typePiece} ${f.numero} — ${f.nomClient} — ${i.reason}`;
+    igEl.appendChild(li);
   });
 }
 
-function viesErrorLabel(code) {
-  const map = {
-    MS_UNAVAILABLE: "Service fiscal du pays indisponible — réessayer plus tard",
-    MS_MAX_CONCURRENT_REQ: "Trop de requêtes vers ce pays — réessayer dans quelques minutes",
-    SERVER_BUSY: "Serveur VIES surchargé — réessayer",
-    TIMEOUT: "Délai dépassé côté VIES — réessayer",
-    SERVICE_UNAVAILABLE: "Service VIES indisponible — réessayer",
-    SERVICE_ERROR: "VIES a renvoyé une erreur sans détail — réessayer",
-    GLOBAL_MAX_CONCURRENT_REQ: "Limite globale VIES atteinte — réessayer",
-    INVALID_INPUT: "Format refusé par VIES",
-    INVALID_REQUESTER_INFO: "Informations demandeur invalides"
-  };
-  return map[code] || `VIES : ${code}`;
-}
-
-function statusLabel(s) {
-  switch (s) {
-    case "valid": return "Valide";
-    case "invalid": return "Non reconnu";
-    case "invalid-format": return "Format invalide";
-    case "invalid-country": return "Pays inconnu";
-    case "network-error": return "Erreur réseau";
-    default: return s;
-  }
-}
-
-async function copyProblems() {
-  const problems = lastResults.filter(r => r.status !== "valid");
-  if (!problems.length) {
-    els.copyBtn.textContent = "Rien à copier";
-    setTimeout(() => els.copyBtn.textContent = "Copier la liste", 1500);
+function showIgnoredInline() {
+  const cls = state.lastClassification;
+  if (!cls || !cls.ignored.length) {
+    alert("Aucune facture ignorée sur cette période.");
     return;
   }
-  const lines = ["Ligne\tNuméro TVA\tStatut\tDétail"];
-  problems.forEach(r => {
-    lines.push([r.excelRow, r.raw, statusLabel(r.status), r.detail].join("\t"));
-  });
-  try {
-    await navigator.clipboard.writeText(lines.join("\n"));
-    els.copyBtn.textContent = "Copié !";
-    setTimeout(() => els.copyBtn.textContent = "Copier la liste", 1500);
-  } catch {
-    els.copyBtn.textContent = "Erreur copie";
-    setTimeout(() => els.copyBtn.textContent = "Copier la liste", 1500);
-  }
+  const lines = cls.ignored.map(i => `${i.facture.typePiece} ${i.facture.numero} — ${i.facture.nomClient} — ${i.reason}`);
+  alert("Factures ignorées :\n\n" + lines.join("\n"));
 }
 
-function resetAll() {
-  workbook = null;
-  sheetRows = [];
-  lastResults = [];
-  els.fileInput.value = "";
-  clearNode(els.resultsTable);
-  showStep("stepUpload");
+async function downloadErtva() {
+  const out = window.Generators.generateErtvaOds(state.lastEntries, state.lastPeriodKey);
+  window.Generators.triggerDownload(out.blob, out.filename);
+}
+
+async function downloadDeb() {
+  const declarant = await window.Store.getDeclarant();
+  const articles = await window.Store.getArticles();
+  const out = window.Generators.generateDebCsv(state.lastEntries, declarant, articles, state.lastPeriodKey);
+  window.Generators.triggerDownload(out.blob, out.filename);
 }

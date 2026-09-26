@@ -1,12 +1,16 @@
 # CLAUDE.md
 
 ## À qui tu parles
-Cliente **non-développeuse**. Français simple, court. Pas de jargon. Tests = trajets dans le navigateur (« clique sur l'icône, glisse le fichier X »), jamais de commande shell. Détails techniques : entre toi et le code.
+Cliente **non-développeuse**. Français simple, court. Pas de jargon. Tests = trajets dans le navigateur (« clique sur l'icône, va dans Configuration, remplis X »), jamais de commande shell. Détails techniques : entre toi et le code.
 
-## Ce que fait le plugin
-Extension Chrome Manifest V3. La cliente glisse un fichier Excel/ODS/CSV, l'extension lit une colonne de numéros de TVA intracommunautaire et interroge **VIES** (Commission européenne) pour chacun. Résultat filtré, fichier d'origine **jamais modifié**.
+## Ce que fait le plugin (v2)
+Extension Chrome Manifest V3. Convertit un export **Sage 50** (fichier .txt de la liste des pièces clients) en 2 fichiers prêts à déposer sur **pro.douane** :
+- **ERTVA** (`.ods`) → « Saisie et Gestion de l'état récapitulatif TVA à l'expédition »
+- **DEB statistique** (`.csv`) → « Saisie et Gestion de la réponse statistique à l'expédition et à l'introduction »
 
-Usage réel : préparer la déclaration DEB / état récapitulatif TVA sans saisir 30 numéros à la main sur le site VIES.
+Vérification VIES intégrée sur les NII des clients avant génération. **Politique tout-ou-rien** : la moindre anomalie bloque l'export et affiche toutes les corrections à faire.
+
+Usage réel : préparer la DEB / ERTVA mensuelle à partir du logiciel de facturation Sage 50.
 
 ## Repo GitHub
 - **Public** : https://github.com/Gnaris/vies-vat-checker-chrome
@@ -15,70 +19,165 @@ Usage réel : préparer la déclaration DEB / état récapitulatif TVA sans sais
 
 ## Structure
 ```
-manifest.json              MV3, action.default_icon uniquement (pas de default_popup)
-background.js              chrome.action.onClicked → ouvre popup.html dans un nouvel onglet
-popup.html + popup.css     UI (drag zone → sélecteur colonne → progrès → résultats)
-popup.js                   Toute la logique (~350 lignes, pas de framework)
-lib/xlsx.mini.min.js       SheetJS (MIT), bundlé local car CSP MV3 interdit CDN
-icons/{16,48,128}.png      Icône : coche blanche sur fond bleu #2563eb, coins arrondis
-README.md                  Docs utilisateur (installation, statuts, confidentialité)
+manifest.json                MV3, permission "storage", host VIES
+background.js                chrome.action.onClicked → ouvre popup.html en onglet
+popup.html                   3 onglets : Déclaration / Articles / Configuration
+popup.css                    Styles
+popup.js                     Orchestration (nav onglets, flow analyse)
+lib/
+  xlsx.full.min.js           SheetJS full (MIT), lecture Excel + écriture ODS
+  eu.js                      Constantes UE, mapping ISO3→ISO2, prefixes VAT (EL≠GR, XI)
+  storage.js                 Wrapper chrome.storage.local (declarant + articles)
+  vies.js                    Parse NII, appels VIES, retry, concurrency
+  sage.js                    Parse TXT Sage 50 (encodage Windows-1252, format TSV)
+  validators.js              Grille garde-fous, filtres par période, détection LIC
+  generators.js              Génération ERTVA (.ods) et DEB stat (.csv)
+icons/{16,48,128}.png        Icône : coche blanche sur fond bleu #2563eb
+README.md                    Docs utilisateur
 ```
 
-Pas de build. Pas de package.json. Pas de node_modules. Tout est statique.
+Pas de build. Pas de package.json. Pas de node_modules. Tout est statique. Chaque `lib/*.js` expose son API via `window.NomModule`.
 
-## API VIES
+## Données stockées (`chrome.storage.local`)
+
+- `declarant` : `{ nomEntreprise, nii, departement }`
+- `articles` : `{ [codeArticle]: { description, codeSH, paysOrigine, poidsNet } }`
+
+## Flux utilisateur
+
+1. **Onglet Configuration** (une fois) : renseigner Nom entreprise + NII français + département.
+2. **Onglet Articles** : ajouter les codes articles Sage avec leur code SH8, pays d'origine, poids net unitaire. Import Excel possible pour la 1re fois.
+3. **Onglet Déclaration** :
+   - Glisser le TXT Sage 50 (menu Sage : *Fichier → Liste → Pièces clients → Exporter*)
+   - L'extension détecte la ou les périodes présentes dans le fichier
+   - Si plusieurs mois → dropdown pour choisir. Sinon → auto-sélection
+   - Cliquer « Analyser » : parcourt les factures UE hors FR à 0 % de TVA, vérifie chaque NII sur VIES
+   - Si **anomalie** → écran rouge listant toutes les corrections à faire dans Sage/mapping
+   - Si **OK** → 2 boutons de téléchargement (ERTVA + DEB) + tableau récapitulatif des factures déclarées
+
+## Logique de filtrage
+
+Une facture est **candidate LIC** (à déclarer) si :
+- Pays client ∈ UE **hors France**
+- Toutes ses lignes ont un **taux TVA = 0 %**
+- Un **NII** client est renseigné
+- Le NII est **valide sur VIES**
+- Le préfixe pays du NII correspond au pays du client (ex. facture BE → NII commence par BE)
+
+Sont **ignorées silencieusement** (pas une erreur) :
+- Factures France
+- Factures pays hors UE
+- Factures BtoC en UE (TVA > 0 %, pas de NII)
+
+Sont **bloquantes** (l'export est refusé, la cliente doit corriger) :
+- Pays UE + TVA 0 % + NII manquant
+- Pays UE + NII présent + TVA ≠ 0 % (incohérence, à vérifier dans Sage)
+- Lignes de facture mixtes (certaines à 0 %, d'autres non)
+- NII commence par FR sur une facture pays UE (autoconsommation)
+- NII commence par GB (plus dans VIES depuis Brexit)
+- NII d'un pays différent du pays client
+- NII refusé par VIES
+- VIES injoignable (après 3 retries)
+- Code SH ou pays d'origine manquant pour un article présent sur une facture LIC
+- Poids net unitaire = 0 dans le mapping article
+
+**Politique tout-ou-rien** : dès qu'une facture candidate a une anomalie, l'export est bloqué. Voir `memory/feedback_strict_validation.md`.
+
+## Format des fichiers générés
+
+### ERTVA (`.ods`)
+3 colonnes sans en-tête :
+- A : `21` (code régime « LIC exonérée »)
+- B : montant HT arrondi entier
+- C : NII client (préfixe pays)
+
+**1 ligne facture (+) et 1 ligne avoir (−) séparées par NII.** Un client peut donc apparaître sur 1 ou 2 lignes.
+
+### DEB statistique (`.csv`)
+21 colonnes séparées par `;`, en-tête inclus.
+
+| # | Colonne | Valeur |
+|---|---|---|
+| 1 | Code flux | `2` (expédition) |
+| 2 | N° déclaration | vide (pro.douane attribue) |
+| 3 | N° ligne | 1, 2, 3… |
+| 4 | Numéro TVA | NII déclarant (config) |
+| 5 | Département | département déclarant (config) |
+| 6 | Mode transport | `3` (route) |
+| 7 | Pays destination | ISO2 |
+| 8 | Nature transaction | `11` |
+| 9 | Valeur fiscale | vide |
+| 10 | Régime | `21` |
+| 11 | Niveau obligations | `1` |
+| 12 | Nomenclature | code SH8 (mapping article) |
+| 13 | NGP | vide |
+| 14 | Masse nette (kg) | Σ qté × poids unitaire, arrondi entier |
+| 15 | Valeur statistique | Σ qté × PU HT, arrondi entier |
+| 16 | Unités supplémentaires | Σ quantité, arrondi entier |
+| 17 | Pays origine | ISO2 (mapping article) |
+| 18 | NII partenaire | NII client |
+| 19 | Code PMNA | vide |
+| 20 | Ref interne | vide |
+| 21 | Période | MMYYYY |
+
+**Agrégation par (NII × code SH × pays origine × rôle facture|avoir).** Les avoirs sont sur des lignes séparées avec valeurs négatives.
+
+## Valeurs figées (constantes en tête de `generators.js`)
+
+- `REGIME_LIC = 21`
+- `CODE_FLUX_EXPEDITION = 2`
+- `MODE_TRANSPORT_ROUTE = 3`
+- `NATURE_TRANSACTION_VENTE = 11` (même pour avoirs — à ajuster si pro.douane refuse : passer les avoirs en `21`)
+- `NIVEAU_OBLIGATION = 1`
+
+## Parser Sage 50
+
+- Encodage détecté auto : BOM UTF-8 → utf-8, sinon Windows-1252 (par défaut Sage)
+- Format tabulé (TSV), une ligne `E` (entête pièce) suivie de N lignes `L` (articles)
+- Colonnes détectées par pattern (insensible aux accents), pas par index — robuste aux variations d'export
+- Colonnes obligatoires : `Type de Ligne`, `Type de pièce`, `N° pièce`, `Date pièce`, `Code pays`, `Taux TVA`, `Code article`, `Quantité`, `PU HT`
+- Détection avoirs : regex `/avoir/i` sur `Type de pièce`
+
+## Pays
+
+- **27 UE** en ISO2 + `EL` (Grèce en VAT) + `XI` (Irlande du Nord)
+- Sage utilise ISO3 (`FRA`, `BEL`, `ITA`…) → conversion via `EU.iso3ToIso2`
+- Grèce : Sage code `GRC`/`GR`, VIES exige `EL`
+- Ne PAS ajouter `GB` : VIES ne couvre plus la Grande-Bretagne. `XI` (Irlande du Nord) OK.
+
+## API VIES (inchangée)
 
 - **Endpoint** : `POST https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number`
-- **Body** :
-  ```json
-  {
-    "countryCode": "BE", "vatNumber": "0819015540",
-    "requesterMemberStateCode": "", "requesterNumber": "",
-    "traderName": "", "traderStreet": "", "traderPostalCode": "",
-    "traderCity": "", "traderCompanyType": ""
-  }
-  ```
-- **Réponse OK** : `{ valid: true, traderName: "…", …, actionSucceed: true }`
-- **Réponse KO** : `valid: false` ou `actionSucceed: false` + `userError: "MS_UNAVAILABLE" | "MS_MAX_CONCURRENT_REQ" | "SERVER_BUSY" | "TIMEOUT" | …`
-- Autorisé via `host_permissions: ["https://ec.europa.eu/*"]` dans `manifest.json`.
-
-**Pays** : les 27 UE + `EL` (Grèce, pas `GR`) + `XI` (Irlande du Nord post-Brexit). Ne pas ajouter `GB` : VIES ne couvre plus la Grande-Bretagne.
-
-## Détails d'implémentation
-
-- **Parsing fichier** : `XLSX.read(arrayBuffer, { type: "array" })` → `XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: "" })`. Marche pour xlsx/xls/ods/csv (SheetJS gère tout).
-- **Détection colonne** :
-  1. Regex sur l'en-tête : `/tva|vat|vies/i`
-  2. Fallback : cherche une cellule qui matche `/^[A-Z]{2}[A-Z0-9]{6,14}$/` dans les 5 premières lignes
-- **Nettoyage TVA** : `.toUpperCase().replace(/[\s.\-/]/g, "")` — retire espaces, points, tirets, slashes. Puis regex `^([A-Z]{2})([A-Z0-9]+)$`. `GR` → `EL`.
-- **Parallélisme** : `CONCURRENCY = 4` (constant en tête de fichier). Bon compromis vitesse ↔ éviter `MS_MAX_CONCURRENT_REQ`.
-- **Retry** : `RETRY_DELAYS_MS = [600, 1800, 4500]` — 3 essais après le 1er échec réseau, backoff exponentiel. Ne retry PAS sur `invalid` (numéro vraiment non reconnu) ni `invalid-format`.
-- **Progression** : mise à jour incrémentale via un compteur partagé `done` dans la closure de `runWithConcurrency`.
+- `CONCURRENCY = 4`, `RETRY_DELAYS_MS = [600, 1800, 4500]`
+- Autorisé via `host_permissions: ["https://ec.europa.eu/*"]`
 
 ## Contraintes techniques
 
-- **Manifest V3** :
-  - Pas de CDN pour les scripts → SheetJS bundlé dans `lib/`.
-  - Pas d'`innerHTML` avec contenu dynamique (hook de sécurité local le bloque). Utiliser `document.createElement` + `textContent`. `clearNode()` helper pour vider.
-  - Service worker `background.js` uniquement pour le clic action.
-- **Pas de framework** : vanilla JS. Ne pas introduire React/Vue/bundler — casserait l'installation « télécharger le ZIP → charger non empaquetée ».
-- **Icônes** : PNG (Chrome ne charge pas les SVG en `action.default_icon`). Générées avec PIL, script inline si besoin de régénérer.
+- **Manifest V3** : pas de CDN pour les scripts → SheetJS bundlé dans `lib/`
+- Pas d'`innerHTML` avec contenu dynamique. Utiliser `document.createElement` + `textContent`. `clearNode()` helper pour vider.
+- Service worker `background.js` uniquement pour le clic action
+- Pas de framework : vanilla JS, chaque module expose son API via `window.NomModule`
+- Icônes : PNG (Chrome ne charge pas les SVG en `action.default_icon`)
 
 ## Tâches courantes
 
-- **Ajouter un nouveau statut** : `statusLabel()` + classe CSS `badge-*` + condition dans `renderResults()` pour la couleur de ligne (`row-ok` / `row-ko` / `row-err`).
-- **Ajouter un code d'erreur VIES connu** : `viesErrorLabel()` — juste une entrée dans le dictionnaire `map`.
-- **Changer la vitesse** : `CONCURRENCY` (parallélisme) ou `RETRY_DELAYS_MS` (agressivité du retry). Ne pas descendre en dessous de 300 ms de délai entre bursts.
-- **Bumper la version** : `manifest.json` → `"version": "1.x.y"`. Chrome ne met pas à jour l'extension non empaquetée automatiquement — la cliente doit recharger via `chrome://extensions` (bouton 🔄).
+- **Ajouter un pays UE** (peu probable) : `EU_COUNTRIES_ISO2` + `VALID_VAT_PREFIXES` + `ISO3_TO_ISO2` dans `lib/eu.js`
+- **Ajouter une règle de validation** : `classifyFactures` dans `lib/validators.js`, ajouter un `blockers.push(...)` avec un `code` et un `message` clair
+- **Changer un code figé DEB** (régime, transport, nature) : constantes en tête de `lib/generators.js`
+- **Changer la vitesse VIES** : `CONCURRENCY` ou `RETRY_DELAYS_MS` dans `lib/vies.js`
+- **Ajouter un code d'erreur VIES connu** : `viesErrorLabel` dans `lib/vies.js`
+- **Bumper la version** : `manifest.json` → `"version": "2.x.y"`. La cliente doit recharger l'extension dans `chrome://extensions` (bouton 🔄)
 
 ## Workflow modif → push
 
 1. Modifier local.
 2. Prévenir la cliente + rappel : recharger l'extension dans `chrome://extensions`.
-3. Elle valide.
-4. Commit + `git push origin main`. Pas de PR, pas de CI. Le repo est un simple partage.
+3. Elle valide dans le navigateur.
+4. Commit + `git push origin main`. Pas de PR, pas de CI.
 
 ## À éviter
-- Ne PAS ajouter de télémétrie / analytics / hébergement externe. La confidentialité (« aucun envoi vers un tiers ») est un argument marketing du README.
-- Ne PAS toucher au fichier source de la cliente — l'extension est en lecture seule sur le fichier. Si un jour on ajoute un export, faire un NOUVEAU fichier (jamais overwrite).
-- Ne PAS supporter GB (Grande-Bretagne) — VIES ne la couvre plus depuis le Brexit. Ajouter `XI` (Irlande du Nord) seulement.
+- Ne PAS ajouter de télémétrie / analytics / hébergement externe (argument marketing du README).
+- Ne PAS toucher au fichier Sage source (lecture seule).
+- Ne PAS générer de fichiers partiels si anomalies : politique tout-ou-rien (voir memory).
+- Ne PAS supporter GB (Brexit). `XI` uniquement.
+- Ne PAS assouplir les garde-fous « pour laisser passer » : la cliente préfère corriger la source que déposer un fichier rejeté.

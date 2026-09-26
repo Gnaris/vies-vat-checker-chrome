@@ -2,117 +2,255 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <title>Vérification Numéro TVA</title>
+  <title>Déclaration DEB / ERTVA — Sage 50</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div class="app">
-    <header>
-      <h1>Vérification des numéros de TVA</h1>
-      <p class="subtitle">Glissez votre fichier de déclaration (Excel .xlsx / .xls ou OpenDocument .ods / CSV) &mdash; chaque TVA est contrôlée sur VIES (Commission européenne). Votre fichier n'est jamais modifié.</p>
+    <header class="app-header">
+      <h1>Déclaration DEB / ERTVA</h1>
+      <p class="subtitle">Convertit un export Sage 50 en fichiers pro.douane prêts à importer. Vérification VIES automatique. Aucun envoi vers un tiers.</p>
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="tabDeclaration" role="tab">1. Déclaration</button>
+        <button class="tab" data-tab="tabArticles" role="tab">2. Articles</button>
+        <button class="tab" data-tab="tabConfig" role="tab">3. Configuration</button>
+      </nav>
     </header>
 
-    <section id="stepUpload">
-      <div id="dropZone" class="drop-zone">
-        <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-          <polyline points="17 8 12 3 7 8"></polyline>
-          <line x1="12" y1="3" x2="12" y2="15"></line>
-        </svg>
-        <p><strong>Glissez votre fichier ici</strong></p>
-        <p class="muted">ou cliquez pour parcourir &mdash; formats acceptés : .xlsx, .xls, .ods, .csv</p>
-        <input type="file" id="fileInput" accept=".xlsx,.xls,.ods,.csv" hidden>
-      </div>
-    </section>
-
-    <section id="stepColumn" class="hidden">
-      <div class="card">
-        <h3>Fichier chargé : <span id="fileName" class="mono"></span></h3>
-        <p class="muted">Choisissez la feuille et la colonne contenant les numéros de TVA :</p>
-        <div class="row">
-          <label>
-            <span>Feuille</span>
-            <select id="sheetSelect"></select>
-          </label>
-          <label>
-            <span>Colonne TVA</span>
-            <select id="columnSelect"></select>
-          </label>
-          <label class="checkbox">
-            <input type="checkbox" id="hasHeader" checked>
-            <span>La 1<sup>re</sup> ligne est un en-tête</span>
-          </label>
-        </div>
-        <div id="previewWrap">
-          <p class="muted small">Aperçu des 5 premières valeurs&nbsp;:</p>
-          <ul id="preview" class="preview"></ul>
-        </div>
-        <div class="actions">
-          <button id="resetBtn" class="btn-secondary">Changer de fichier</button>
-          <button id="checkBtn" class="btn-primary">Vérifier <span id="checkCount"></span></button>
-        </div>
-      </div>
-    </section>
-
-    <section id="stepProgress" class="hidden">
-      <div class="card">
-        <h3>Vérification en cours&hellip;</h3>
-        <div class="progress-wrap">
-          <div id="progressBar" class="progress-bar"></div>
-        </div>
-        <p id="progressText" class="muted">0 / 0</p>
-        <button id="cancelBtn" class="btn-secondary">Annuler</button>
-      </div>
-    </section>
-
-    <section id="stepResults" class="hidden">
-      <div class="summary">
-        <div class="stat stat-ok">
-          <span class="stat-value" id="statOk">0</span>
-          <span class="stat-label">Valides</span>
-        </div>
-        <div class="stat stat-ko">
-          <span class="stat-value" id="statKo">0</span>
-          <span class="stat-label">À corriger</span>
-        </div>
-        <div class="stat stat-warn">
-          <span class="stat-value" id="statErr">0</span>
-          <span class="stat-label">Erreurs réseau</span>
-        </div>
+    <!-- ================= TAB DECLARATION ================= -->
+    <section id="tabDeclaration" class="tab-panel active">
+      <div id="declBanner" class="banner banner-warn hidden">
+        <strong>⚠ Configuration incomplète.</strong>
+        <span id="declBannerDetail"></span>
+        <button class="btn-link" data-goto="tabConfig">Aller à la configuration →</button>
       </div>
 
-      <div class="card">
-        <div class="results-head">
-          <h3>Résultat</h3>
-          <div class="filters">
-            <label class="checkbox"><input type="checkbox" id="filterOnlyProblems" checked><span>N'afficher que les problèmes</span></label>
-            <button id="retryBtn" class="btn-secondary small">Réessayer les échecs</button>
-            <button id="copyBtn" class="btn-secondary small">Copier la liste</button>
-            <button id="restartBtn" class="btn-secondary small">Nouveau fichier</button>
+      <!-- Step: upload -->
+      <section id="stepSageUpload">
+        <div id="sageDropZone" class="drop-zone">
+          <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="17 8 12 3 7 8"></polyline>
+            <line x1="12" y1="3" x2="12" y2="15"></line>
+          </svg>
+          <p><strong>Glissez l'export Sage 50 (fichier .txt)</strong></p>
+          <p class="muted">Menu Sage : <em>Fichier → Liste → Pièces clients → Exporter</em></p>
+          <input type="file" id="sageFileInput" accept=".txt,.csv" hidden>
+        </div>
+      </section>
+
+      <!-- Step: period + summary -->
+      <section id="stepSagePeriod" class="hidden">
+        <div class="card">
+          <h3>Fichier : <span id="sageFileName" class="mono"></span></h3>
+          <p class="muted" id="sageSummary"></p>
+          <div class="row">
+            <label>
+              <span>Période à déclarer</span>
+              <select id="periodSelect"></select>
+            </label>
+            <label class="checkbox" title="Détails techniques">
+              <input type="checkbox" id="periodShowAll">
+              <span>Afficher toutes les factures détectées</span>
+            </label>
+          </div>
+          <div id="periodPreview" class="preview-list hidden"></div>
+          <div class="actions">
+            <button id="sageResetBtn" class="btn-secondary">Changer de fichier</button>
+            <button id="analyzeBtn" class="btn-primary">Analyser cette période</button>
           </div>
         </div>
+      </section>
+
+      <!-- Step: progress -->
+      <section id="stepAnalyze" class="hidden">
+        <div class="card">
+          <h3 id="analyzeTitle">Vérification en cours…</h3>
+          <div class="progress-wrap"><div id="analyzeBar" class="progress-bar"></div></div>
+          <p id="analyzeText" class="muted">0 / 0</p>
+          <button id="cancelAnalyzeBtn" class="btn-secondary">Annuler</button>
+        </div>
+      </section>
+
+      <!-- Step: results (OK) -->
+      <section id="stepResultOk" class="hidden">
+        <div class="banner banner-ok">
+          <strong>✓ Tout est conforme.</strong> Les fichiers sont prêts à télécharger et importer sur pro.douane.
+        </div>
+        <div class="summary">
+          <div class="stat stat-ok"><span class="stat-value" id="okDeclared">0</span><span class="stat-label">Factures LIC</span></div>
+          <div class="stat stat-neutral"><span class="stat-value" id="okIgnored">0</span><span class="stat-label">Ignorées (FR/hors UE)</span></div>
+          <div class="stat stat-info"><span class="stat-value" id="okNiiCount">0</span><span class="stat-label">Clients UE distincts</span></div>
+        </div>
+        <div class="card">
+          <h3>Téléchargement</h3>
+          <p class="muted small">Vérifiez la période avant de déposer sur pro.douane : <strong id="okPeriodLabel"></strong>.</p>
+          <div class="download-grid">
+            <div class="download-card">
+              <div class="download-title">État récapitulatif TVA</div>
+              <div class="download-desc">Format .ods — à déposer dans « Saisie et Gestion de l'état récapitulatif TVA à l'expédition »</div>
+              <button id="downloadErtvaBtn" class="btn-primary">Télécharger ERTVA</button>
+            </div>
+            <div class="download-card">
+              <div class="download-title">DEB statistique</div>
+              <div class="download-desc">Format .csv — à déposer dans « Saisie et Gestion de la réponse statistique à l'expédition et à l'introduction »</div>
+              <button id="downloadDebBtn" class="btn-primary">Télécharger DEB</button>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="results-head">
+            <h3>Détail des factures à déclarer</h3>
+            <button id="okShowIgnoredBtn" class="btn-secondary small">Voir aussi les ignorées</button>
+          </div>
+          <div class="table-wrap">
+            <table id="declaredTable">
+              <thead>
+                <tr>
+                  <th>N° pièce</th>
+                  <th>Type</th>
+                  <th>Date</th>
+                  <th>Client</th>
+                  <th>Pays</th>
+                  <th>NII</th>
+                  <th>Total HT</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="restartBtn" class="btn-secondary">Nouveau fichier</button>
+        </div>
+      </section>
+
+      <!-- Step: results (BLOCKED) -->
+      <section id="stepResultBlocked" class="hidden">
+        <div class="banner banner-err">
+          <strong>✗ Export bloqué —</strong> <span id="blockedCount"></span> anomalie(s) détectée(s). Corrigez tout ce qui est listé ci-dessous puis réimportez le fichier Sage.
+        </div>
+        <div class="card">
+          <h3>Anomalies à corriger</h3>
+          <ul id="blockersList" class="blockers"></ul>
+        </div>
+        <div class="card" id="ignoredCard">
+          <h3>Factures ignorées <span id="ignoredCount" class="muted small"></span></h3>
+          <p class="muted small">Ces factures ne concernent pas les déclarations DEB/ERTVA (France, hors UE, BtoC).</p>
+          <ul id="ignoredList" class="ignored"></ul>
+        </div>
+        <div class="actions">
+          <button id="restartBlockedBtn" class="btn-secondary">Nouveau fichier</button>
+        </div>
+      </section>
+    </section>
+
+    <!-- ================= TAB ARTICLES ================= -->
+    <section id="tabArticles" class="tab-panel">
+      <div class="card">
+        <div class="results-head">
+          <h3>Mapping articles → code SH douanier</h3>
+          <div class="filters">
+            <input type="text" id="articleSearch" placeholder="Rechercher…" class="text-input small">
+            <button id="importArticlesBtn" class="btn-secondary small">Importer Excel</button>
+            <button id="exportArticlesBtn" class="btn-secondary small">Exporter Excel</button>
+            <button id="addArticleBtn" class="btn-primary small">+ Ajouter</button>
+            <input type="file" id="articlesFileInput" accept=".xlsx,.xls,.ods,.csv" hidden>
+          </div>
+        </div>
+        <p class="muted small">Chaque article de Sage doit avoir son code SH8 (nomenclature douanière) et son pays d'origine. Ces valeurs sont utilisées pour remplir la DEB statistique.</p>
         <div class="table-wrap">
-          <table id="resultsTable">
+          <table id="articlesTable">
             <thead>
               <tr>
-                <th>Ligne Excel</th>
-                <th>Numéro TVA</th>
-                <th>Statut</th>
-                <th>Détail</th>
+                <th>Code article</th>
+                <th>Description</th>
+                <th>Code SH8</th>
+                <th>Pays origine</th>
+                <th>Poids net (kg)</th>
+                <th></th>
               </tr>
             </thead>
             <tbody></tbody>
           </table>
         </div>
+        <p id="articlesEmpty" class="muted small hidden">Aucun article enregistré. Utilisez « + Ajouter » pour créer une entrée, ou « Importer Excel » pour charger un fichier.</p>
+      </div>
+
+      <!-- Modal ajout/édition -->
+      <div id="articleModal" class="modal hidden">
+        <div class="modal-content">
+          <h3 id="articleModalTitle">Ajouter un article</h3>
+          <div class="form-grid">
+            <label>
+              <span>Code article</span>
+              <input type="text" id="articleCode" placeholder="ART0001">
+            </label>
+            <label>
+              <span>Description</span>
+              <input type="text" id="articleDescription" placeholder="Bague fantaisie">
+            </label>
+            <label>
+              <span>Code SH8 (8 chiffres)</span>
+              <input type="text" id="articleCodeSH" placeholder="71171900" maxlength="8">
+            </label>
+            <label>
+              <span>Pays d'origine (ISO2)</span>
+              <input type="text" id="articlePaysOrigine" placeholder="IT" maxlength="2">
+            </label>
+            <label>
+              <span>Poids net unitaire (kg)</span>
+              <input type="number" id="articlePoidsNet" placeholder="0.020" step="0.001" min="0">
+            </label>
+          </div>
+          <p id="articleFormError" class="err-text hidden"></p>
+          <div class="actions">
+            <button id="articleCancelBtn" class="btn-secondary">Annuler</button>
+            <button id="articleSaveBtn" class="btn-primary">Enregistrer</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= TAB CONFIG ================= -->
+    <section id="tabConfig" class="tab-panel">
+      <div class="card">
+        <h3>Identité du déclarant</h3>
+        <p class="muted small">Informations reprises sur toutes les déclarations (DEB + ERTVA). À remplir une fois.</p>
+        <div class="form-grid">
+          <label>
+            <span>Nom entreprise</span>
+            <input type="text" id="cfgNomEntreprise" placeholder="Beli & Jolie">
+          </label>
+          <label>
+            <span>NII (numéro TVA intracom français)</span>
+            <input type="text" id="cfgNii" placeholder="FR88445003304">
+          </label>
+          <label>
+            <span>Département (2 chiffres)</span>
+            <input type="text" id="cfgDepartement" placeholder="93" maxlength="3">
+          </label>
+        </div>
+        <p id="cfgError" class="err-text hidden"></p>
+        <p id="cfgSaved" class="ok-text hidden">✓ Configuration enregistrée.</p>
+        <div class="actions">
+          <button id="cfgSaveBtn" class="btn-primary">Enregistrer</button>
+        </div>
       </div>
     </section>
 
     <footer>
-      <p class="muted small">Source : <a href="https://ec.europa.eu/taxation_customs/vies/#/vat-validation" target="_blank" rel="noopener">VIES &mdash; Commission européenne</a>. Aucun envoi vers un tiers.</p>
+      <p class="muted small">Source vérification NII : <a href="https://ec.europa.eu/taxation_customs/vies/#/vat-validation" target="_blank" rel="noopener">VIES — Commission européenne</a>. Aucun envoi de vos données vers un tiers.</p>
     </footer>
   </div>
 
-  <script src="lib/xlsx.mini.min.js"></script>
+  <script src="lib/xlsx.full.min.js"></script>
+  <script src="lib/eu.js"></script>
+  <script src="lib/storage.js"></script>
+  <script src="lib/vies.js"></script>
+  <script src="lib/sage.js"></script>
+  <script src="lib/validators.js"></script>
+  <script src="lib/generators.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

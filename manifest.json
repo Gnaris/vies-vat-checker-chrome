@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "Vérification Numéro TVA",
-  "version": "1.0.0",
-  "description": "Glissez un fichier Excel/ODS pour vérifier chaque numéro de TVA intracommunautaire via VIES (Commission européenne). Le fichier n'est jamais modifié.",
+  "name": "Déclaration DEB / ERTVA depuis Sage 50",
+  "version": "2.0.0",
+  "description": "Convertit un export Sage 50 en fichiers pro.douane prêts à importer : DEB statistique à l'expédition et État récapitulatif TVA. Vérification VIES intégrée.",
   "action": {
-    "default_title": "Vérifier les TVA d'un fichier",
+    "default_title": "Générer DEB et ERTVA",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
@@ -19,6 +19,9 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
+  "permissions": [
+    "storage"
+  ],
   "host_permissions": [
     "https://ec.europa.eu/*"
   ]
