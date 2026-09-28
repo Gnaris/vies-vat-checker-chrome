@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Déclaration DEB / ERTVA depuis Sage 50",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Convertit un export Sage 50 en fichiers pro.douane prêts à importer : DEB statistique à l'expédition et État récapitulatif TVA. Vérification VIES intégrée.",
   "action": {
     "default_title": "Générer DEB et ERTVA",

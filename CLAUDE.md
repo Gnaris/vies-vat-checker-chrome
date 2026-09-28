@@ -87,11 +87,11 @@ Sont **bloquantes** (l'export est refusé, la cliente doit corriger) :
 
 ### ERTVA (`.ods`)
 3 colonnes sans en-tête :
-- A : `21` (code régime « LIC exonérée »)
+- A : code régime — `21` pour une facture (LIC exonérée), `25` pour un avoir (minoration de valeur)
 - B : montant HT arrondi entier
 - C : NII client (préfixe pays)
 
-**1 ligne facture (+) et 1 ligne avoir (−) séparées par NII.** Un client peut donc apparaître sur 1 ou 2 lignes.
+**1 ligne facture (+, régime 21) et 1 ligne avoir (−, régime 25) séparées par NII.** Un client peut donc apparaître sur 1 ou 2 lignes.
 
 ### DEB statistique (`.csv`)
 21 colonnes séparées par `;`, en-tête inclus.
@@ -105,9 +105,9 @@ Sont **bloquantes** (l'export est refusé, la cliente doit corriger) :
 | 5 | Département | département déclarant (config) |
 | 6 | Mode transport | `3` (route) |
 | 7 | Pays destination | ISO2 |
-| 8 | Nature transaction | `11` |
+| 8 | Nature transaction | `11` (facture) / `21` (avoir = retour) |
 | 9 | Valeur fiscale | vide |
-| 10 | Régime | `21` |
+| 10 | Régime | `21` (facture) / `29` (avoir = retour) |
 | 11 | Niveau obligations | `1` |
 | 12 | Nomenclature | code SH8 (mapping article) |
 | 13 | NGP | vide |
@@ -124,11 +124,16 @@ Sont **bloquantes** (l'export est refusé, la cliente doit corriger) :
 
 ## Valeurs figées (constantes en tête de `generators.js`)
 
-- `REGIME_LIC = 21`
+- `REGIME_LIC_FACTURE = 21` (facture, ERTVA et DEB)
+- `REGIME_LIC_AVOIR_DEB = 29` (avoir de retour, DEB stat)
+- `REGIME_LIC_AVOIR_ERTVA = 25` (avoir = minoration de valeur, ERTVA)
 - `CODE_FLUX_EXPEDITION = 2`
 - `MODE_TRANSPORT_ROUTE = 3`
-- `NATURE_TRANSACTION_VENTE = 11` (même pour avoirs — à ajuster si pro.douane refuse : passer les avoirs en `21`)
+- `NATURE_TRANSACTION_VENTE = 11` (facture)
+- `NATURE_TRANSACTION_RETOUR = 21` (avoir de retour, DEB stat)
 - `NIVEAU_OBLIGATION = 1`
+
+**Hypothèse** : tous les avoirs sont traités comme des **retours** (régime DEB 29, nature 21). Si un jour la cliente émet des avoirs qui ne sont pas des retours (remise commerciale, correction de prix…), il faut adapter le code régime selon la doc douanière — voir email conseiller douane du 2026-09-28.
 
 ## Parser Sage 50
 
