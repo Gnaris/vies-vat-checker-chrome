@@ -1,26 +1,11 @@
-# Vérification Numéro TVA — Extension Chrome
+# Déclaration DEB / ERTVA depuis Sage 50 — Extension Chrome
 
-Extension Chrome qui vérifie en masse les numéros de TVA intracommunautaire d'un fichier Excel / ODS / CSV via le service officiel **VIES** de la Commission européenne.
+Extension Chrome qui convertit un export **Sage 50** (liste des pièces clients) en deux fichiers prêts à déposer sur **pro.douane** :
 
-Idéale pour préparer une déclaration DEB / DES / état récapitulatif de TVA sans avoir à saisir chaque numéro à la main sur le site de la Commission.
+- **ERTVA** (`.ods`) — État récapitulatif TVA à l'expédition
+- **DEB statistique** (`.csv`) — Réponse statistique à l'expédition et à l'introduction
 
-## Fonctionnement
-
-1. Glissez votre fichier (`.xlsx`, `.xls`, `.ods`, `.csv`)
-2. L'extension détecte automatiquement la feuille et la colonne TVA (en cherchant « TVA », « VAT » ou un motif `AB12345678`)
-3. Chaque numéro est vérifié en parallèle (4 requêtes simultanées) sur [VIES](https://ec.europa.eu/taxation_customs/vies/)
-4. Retry automatique jusqu'à 3 fois si le service fiscal du pays est temporairement indisponible
-5. Résultat filtré : ne s'affichent que les numéros à corriger (valides masqués par défaut)
-
-**Le fichier d'origine n'est jamais modifié.** L'extension ne fait que lire et signaler.
-
-## Capacités
-
-- Formats acceptés : `.xlsx`, `.xls`, `.ods`, `.csv` (séparateur `;` ou `,`)
-- Codes pays UE reconnus (+ Grèce `EL`, Irlande du Nord `XI`)
-- Nettoyage automatique des espaces, tirets et points dans les numéros
-- Retry sur erreur `MS_UNAVAILABLE`, `MS_MAX_CONCURRENT_REQ`, `SERVER_BUSY`, `TIMEOUT`
-- Export copier-coller (TSV) des lignes en problème pour recherche rapide dans Excel
+Chaque numéro de TVA client est vérifié en amont sur le service officiel **VIES** de la Commission européenne. Si la moindre anomalie est détectée, l'export est bloqué et l'extension liste toutes les corrections à faire dans Sage — **jamais de fichier partiel envoyé à pro.douane**.
 
 ## Installation
 
@@ -28,54 +13,86 @@ Idéale pour préparer une déclaration DEB / DES / état récapitulatif de TVA 
 2. Ouvrir Chrome à l'adresse `chrome://extensions`
 3. Activer le **Mode développeur** (en haut à droite)
 4. Cliquer **Charger l'extension non empaquetée**
-5. Sélectionner le dossier `Vérification Numéo TVA` (celui contenant `manifest.json`)
+5. Sélectionner le dossier extrait (celui contenant `manifest.json`)
 6. Épingler l'icône ✓ bleue dans la barre Chrome
 
 ## Utilisation
 
-- Cliquer sur l'icône dans la barre Chrome → un nouvel onglet s'ouvre
-- Glisser le fichier
-- Cliquer **Vérifier**
+L'extension a trois onglets, à remplir dans cet ordre :
 
-## Statuts affichés
+### 1. Configuration (une fois)
+- Nom d'entreprise
+- NII français (commence par `FR`)
+- Département (2 chiffres, ex. `93`)
 
-| Badge | Signification |
-|---|---|
-| 🟢 **Valide** | TVA reconnue par le service fiscal du pays |
-| 🔴 **Non reconnu** | TVA rejetée par VIES — numéro à corriger |
-| 🔴 **Format invalide** | Chaîne qui ne ressemble pas à un numéro TVA (2 lettres + chiffres) |
-| 🔴 **Pays inconnu** | Code pays non couvert par VIES (hors UE) |
-| 🟡 **Erreur réseau** | VIES ou le service du pays indisponible après 3 essais — à vérifier manuellement sur [VIES](https://ec.europa.eu/taxation_customs/vies/) |
+### 2. Articles (une fois, puis mise à jour à chaque nouveau code Sage)
+Pour chaque code article utilisé dans Sage :
+- Code SH8 (nomenclature douanière)
+- Pays d'origine (ISO2, ex. `FR`, `CN`)
+- Poids net unitaire (kg)
+
+Import Excel possible pour la première initialisation.
+
+### 3. Déclaration (à chaque déclaration mensuelle)
+1. Dans Sage : *Fichier → Liste → Pièces clients → Exporter* → fichier `.txt`
+2. Glisser le fichier dans l'onglet Déclaration
+3. Choisir la période (auto-sélectionnée s'il n'y a qu'un mois)
+4. Cliquer **Analyser** — l'extension vérifie chaque NII sur VIES
+5. Si tout est OK → 2 boutons de téléchargement (ERTVA + DEB) + tableau récapitulatif
+6. Si anomalie → liste rouge des corrections à faire dans Sage ou dans l'onglet Articles
+
+## Ce qui est déclaré, ignoré, ou bloquant
+
+**Déclaré** : facture pays UE hors France, TVA à 0 %, NII valide sur VIES avec bon préfixe pays.
+
+**Ignoré silencieusement** :
+- Factures France
+- Factures pays hors UE
+- Factures BtoC en UE (TVA > 0 %, sans NII)
+- Factures avec NII `IS`, `GB` ou `CHE` (Islande, Royaume-Uni, Suisse — hors VIES)
+
+**Bloquant** (à corriger avant re-génération) :
+- Pays UE + TVA 0 % + NII manquant
+- Pays UE + NII présent + TVA ≠ 0 % (incohérence)
+- Lignes de facture mixtes (certaines à 0 %, d'autres non)
+- NII français sur une facture pays UE
+- NII de pays différent du pays client
+- NII refusé par VIES
+- VIES injoignable après 3 essais
+- Article sans code SH ou pays d'origine renseigné dans l'onglet Articles
+- Poids net unitaire à 0 dans l'onglet Articles
 
 ## Confidentialité
 
 - Aucun envoi vers un tiers autre que `ec.europa.eu` (VIES officiel)
-- Aucune télémétrie, aucun stockage, aucune connexion externe supplémentaire
-- Le code source complet est dans ce repo (250 lignes de JS lisibles)
+- Aucune télémétrie, aucun compte, aucun serveur
+- Les données déclarant et articles restent dans `chrome.storage.local` (ne quittent pas votre navigateur)
+- Le fichier Sage source n'est jamais modifié ni transmis
+- Code source complet et lisible dans ce repo
 
-## Structure
+## Structure du code
 
 ```
 manifest.json          Manifest V3
-background.js          Ouvre popup.html dans un nouvel onglet au clic
-popup.html + popup.css + popup.js
-lib/xlsx.mini.min.js   SheetJS (parsing xlsx/xls/ods/csv, MIT)
-icons/                 3 tailles (16/48/128 px)
+background.js          Ouvre popup.html dans un nouvel onglet au clic sur l'icône
+popup.html/css/js      3 onglets : Déclaration / Articles / Configuration
+lib/
+  xlsx.full.min.js     SheetJS (MIT) — lecture Excel, écriture ODS
+  eu.js                Codes pays UE, préfixes VAT
+  storage.js           Wrapper chrome.storage.local
+  vies.js              Appels VIES + retry
+  sage.js              Parser export Sage 50 (TSV, Windows-1252)
+  validators.js        Grille de validation, détection LIC
+  generators.js        Génération ERTVA (.ods) et DEB stat (.csv)
+icons/                 16/48/128 px
 ```
+
+Aucun build. Pas de `package.json`, pas de `node_modules`. Vanilla JS.
 
 ## Dépendances
 
-- [SheetJS Community Edition](https://sheetjs.com/) (MIT) — lecture des fichiers tableur
-- Aucune autre — pas de framework, pas de bundler, pas de build
+- [SheetJS Community Edition](https://sheetjs.com/) (MIT) — lecture Excel et écriture ODS
 
 ## Licence
 
 MIT — utilisez, modifiez, redistribuez librement.
-
-## Contribuer
-
-Les issues et pull requests sont les bienvenues. Idées d'améliorations :
-
-- Support d'autres services de vérification hors UE (UK HMRC, Suisse UID)
-- Export du rapport en PDF ou Excel
-- Historique des vérifications

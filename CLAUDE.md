@@ -36,7 +36,13 @@ icons/{16,48,128}.png        Icône : coche blanche sur fond bleu #2563eb
 README.md                    Docs utilisateur
 ```
 
-Pas de build. Pas de package.json. Pas de node_modules. Tout est statique. Chaque `lib/*.js` expose son API via `window.NomModule`.
+Pas de build. Pas de package.json. Pas de node_modules. Tout est statique. Chaque `lib/*.js` expose son API via `window.NomModule` :
+- `window.EU` (`eu.js`) — codes pays, préfixes VAT, `getIgnoredVatPrefix` (IS/GB/CHE)
+- `window.Vies` (`vies.js`) — `parseVat`, appels VIES avec retry, concurrency
+- `window.Sage` (`sage.js`) — `parseSageTxt`, détection avoir/facture, clés de période
+- `window.Validators` (`validators.js`) — `classifyFactures` (blockers/ignored/toDeclare), `collectCandidateNiis`, `detectPeriods`
+- `window.Generators` (`generators.js`) — `generateErtvaOds`, `generateDebCsv`, `triggerDownload`
+- `window.Storage` (`storage.js`) — wrapper `chrome.storage.local` (declarant + articles)
 
 ## Données stockées (`chrome.storage.local`)
 
@@ -88,7 +94,7 @@ Sont **bloquantes** (l'export est refusé, la cliente doit corriger) :
 ### ERTVA (`.ods`)
 3 colonnes sans en-tête :
 - A : code régime — `21` pour une facture (LIC exonérée), `25` pour un avoir (minoration de valeur)
-- B : montant HT arrondi entier
+- B : montant HT arrondi entier — **négatif** pour les lignes avoir (convention pro.douane de minoration)
 - C : NII client (préfixe pays)
 
 **1 ligne facture (+, régime 21) et 1 ligne avoir (−, régime 25) séparées par NII.** Un client peut donc apparaître sur 1 ou 2 lignes.
@@ -172,6 +178,16 @@ Sont **bloquantes** (l'export est refusé, la cliente doit corriger) :
 - **Changer la vitesse VIES** : `CONCURRENCY` ou `RETRY_DELAYS_MS` dans `lib/vies.js`
 - **Ajouter un code d'erreur VIES connu** : `viesErrorLabel` dans `lib/vies.js`
 - **Bumper la version** : `manifest.json` → `"version": "2.x.y"`. La cliente doit recharger l'extension dans `chrome://extensions` (bouton 🔄)
+
+## Debug & test local
+
+Pas de tests automatisés. Toute validation se fait dans le navigateur, sur un vrai export Sage 50 fourni par la cliente.
+
+- **Charger l'extension** : `chrome://extensions` → activer « Mode développeur » (coin haut-droit) → « Charger l'extension non empaquetée » → sélectionner le dossier racine (celui contenant `manifest.json`).
+- **Recharger après modif** : bouton 🔄 sur la carte de l'extension dans `chrome://extensions`. Recharger l'onglet popup ensuite.
+- **Console popup** : F12 dans l'onglet ouvert par l'icône. C'est ici que remontent les erreurs de `popup.js` et des modules `lib/*.js`.
+- **Console service worker** : `chrome://extensions` → sur la carte de l'extension, lien « service worker ». Pour débugger `background.js` (peu utile ici, il ne fait qu'ouvrir le popup).
+- **Fichier de test** : la cliente en fournit sur demande. Ne pas committer d'exports Sage dans le repo (données clients réelles).
 
 ## Workflow modif → push
 
