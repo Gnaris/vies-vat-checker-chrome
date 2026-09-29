@@ -68,13 +68,13 @@ Sont **ignorées silencieusement** (pas une erreur) :
 - Factures France
 - Factures pays hors UE
 - Factures BtoC en UE (TVA > 0 %, pas de NII)
+- Factures dont le NII commence par `IS`, `GB` ou `CHE` (Islande, Royaume-Uni, Suisse — hors VIES). Voir `IGNORED_VAT_PREFIXES` dans `lib/eu.js`.
 
 Sont **bloquantes** (l'export est refusé, la cliente doit corriger) :
 - Pays UE + TVA 0 % + NII manquant
 - Pays UE + NII présent + TVA ≠ 0 % (incohérence, à vérifier dans Sage)
 - Lignes de facture mixtes (certaines à 0 %, d'autres non)
 - NII commence par FR sur une facture pays UE (autoconsommation)
-- NII commence par GB (plus dans VIES depuis Brexit)
 - NII d'un pays différent du pays client
 - NII refusé par VIES
 - VIES injoignable (après 3 retries)
