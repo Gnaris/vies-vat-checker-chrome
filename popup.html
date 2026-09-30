@@ -120,6 +120,11 @@
             </table>
           </div>
         </div>
+        <div class="card hidden" id="euVatPaidCardOk">
+          <h3>⚠ Factures UE hors France avec TVA payée <span id="euVatPaidCountOk" class="muted small"></span></h3>
+          <p class="muted small">Ces factures sont dans un pays de l'UE mais la TVA a été facturée. À vérifier manuellement — c'est à vous de juger s'il faut corriger dans Sage. L'export n'est pas bloqué.</p>
+          <ul id="euVatPaidListOk" class="eu-vat-paid"></ul>
+        </div>
         <div class="actions">
           <button id="restartBtn" class="btn-secondary">Nouveau fichier</button>
         </div>
@@ -130,13 +135,20 @@
         <div class="banner banner-err">
           <strong>✗ Export bloqué —</strong> <span id="blockedCount"></span> anomalie(s) détectée(s). Corrigez tout ce qui est listé ci-dessous puis réimportez le fichier Sage.
         </div>
-        <div class="card">
-          <h3>Anomalies à corriger</h3>
-          <ul id="blockersList" class="blockers"></ul>
+        <div class="results-grid">
+          <div class="card">
+            <h3>Anomalies à corriger</h3>
+            <ul id="blockersList" class="blockers"></ul>
+          </div>
+          <div class="card" id="euVatPaidCardBlocked">
+            <h3>Factures UE hors France avec TVA payée <span id="euVatPaidCountBlocked" class="muted small"></span></h3>
+            <p class="muted small">À vérifier manuellement : ces factures sont dans un pays de l'UE mais la TVA a été facturée. Le statut VIES du NII est vérifié à titre informatif. C'est à vous de juger s'il faut corriger dans Sage (l'export n'est pas bloqué par ces cas).</p>
+            <ul id="euVatPaidListBlocked" class="eu-vat-paid"></ul>
+          </div>
         </div>
         <div class="card" id="ignoredCard">
           <h3>Factures ignorées <span id="ignoredCount" class="muted small"></span></h3>
-          <p class="muted small">Ces factures ne concernent pas les déclarations DEB/ERTVA (France, hors UE, BtoC).</p>
+          <p class="muted small">Ces factures ne concernent pas les déclarations DEB/ERTVA (France, hors UE).</p>
           <ul id="ignoredList" class="ignored"></ul>
         </div>
         <div class="actions">

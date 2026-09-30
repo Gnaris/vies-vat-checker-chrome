@@ -326,7 +326,7 @@ tbody tr.row-avoir:hover { background: #fde68a; }
 .download-title { font-weight: 600; font-size: 14px; }
 .download-desc { font-size: 12px; color: #6b7280; line-height: 1.5; flex: 1; }
 
-.blockers, .ignored {
+.blockers, .ignored, .eu-vat-paid {
   list-style: none;
   display: flex;
   flex-direction: column;
@@ -348,6 +348,51 @@ tbody tr.row-avoir:hover { background: #fde68a; }
   font-size: 12px;
   color: #4b5563;
 }
+
+.results-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .results-grid { grid-template-columns: 1fr; }
+}
+
+.eu-vat-paid li {
+  padding: 10px 12px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #78350f;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.eu-vat-paid .eu-vat-header {
+  font-weight: 600;
+  color: #7c2d12;
+}
+.eu-vat-paid .eu-vat-meta {
+  font-size: 12px;
+  color: #78350f;
+}
+.eu-vat-paid .vies-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-left: 6px;
+}
+.vies-badge.vies-valid { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+.vies-badge.vies-invalid { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+.vies-badge.vies-neutral { background: #e5e7eb; color: #374151; border: 1px solid #d1d5db; }
+.vies-badge.vies-warn { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
 
 .preview-list {
   max-height: 180px;

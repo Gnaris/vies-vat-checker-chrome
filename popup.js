@@ -504,7 +504,8 @@ async function startAnalysis() {
   } else if (classification.toDeclare.length === 0) {
     renderBlocked({
       blockers: [{ message: "Aucune facture éligible à la déclaration LIC sur cette période (ni facture, ni avoir intracom valide)." }],
-      ignored: classification.ignored
+      ignored: classification.ignored,
+      euVatPaid: classification.euVatPaid
     });
     showStep("stepResultBlocked");
   } else {
@@ -519,6 +520,8 @@ function renderOk(cls, periodKey) {
   $("okIgnored").textContent = cls.ignored.length;
   $("okNiiCount").textContent = uniqueNiis.size;
   $("okPeriodLabel").textContent = window.Sage.periodLabel(periodKey);
+
+  renderEuVatPaidSection(cls.euVatPaid || [], "euVatPaidCardOk", "euVatPaidListOk", "euVatPaidCountOk", true);
 
   const tbody = $("declaredTable").querySelector("tbody");
   clearNode(tbody);
@@ -570,6 +573,76 @@ function renderBlocked(cls) {
     li.textContent = `${f.typePiece} ${f.numero} — ${f.nomClient} — ${i.reason}`;
     igEl.appendChild(li);
   });
+
+  renderEuVatPaidSection(cls.euVatPaid || [], "euVatPaidCardBlocked", "euVatPaidListBlocked", "euVatPaidCountBlocked", false);
+}
+
+function viesBadgeClass(code) {
+  if (code === "valid") return "vies-valid";
+  if (code === "invalid" || code === "bad-format" || code === "fr-nii") return "vies-invalid";
+  if (code === "network-error" || code === "not-checked" || code === "other") return "vies-warn";
+  return "vies-neutral";
+}
+
+function viesBadgeText(code) {
+  if (code === "valid") return "VIES ✓";
+  if (code === "invalid") return "VIES ✗";
+  if (code === "bad-format") return "Format invalide";
+  if (code === "fr-nii") return "NII FR";
+  if (code === "network-error") return "VIES injoignable";
+  if (code === "not-checked") return "Non vérifié";
+  if (code === "ignored-prefix") return "Hors VIES";
+  if (code === "no-nii") return "NII absent";
+  return "?";
+}
+
+function renderEuVatPaidSection(items, cardId, listId, countId, hideCardIfEmpty) {
+  const list = $(listId);
+  const countEl = $(countId);
+  const card = $(cardId);
+  clearNode(list);
+  countEl.textContent = items.length ? `(${items.length})` : "";
+  if (hideCardIfEmpty) {
+    card.classList.toggle("hidden", items.length === 0);
+  }
+  items
+    .slice()
+    .sort((a, b) => (a.facture.date?.getTime() || 0) - (b.facture.date?.getTime() || 0))
+    .forEach(e => {
+      const f = e.facture;
+      const ht = f.lignes.reduce((s, l) => s + l.quantite * l.puHT, 0);
+
+      const li = document.createElement("li");
+
+      const header = document.createElement("div");
+      header.className = "eu-vat-header";
+      const numSpan = document.createElement("span");
+      numSpan.className = "mono";
+      numSpan.textContent = `${f.typePiece || "Pièce"} ${f.numero}`;
+      header.appendChild(numSpan);
+      header.appendChild(document.createTextNode(` — ${f.nomClient} (${e.iso2Client}) — TVA ${e.tvaRate} %`));
+      li.appendChild(header);
+
+      const meta = document.createElement("div");
+      meta.className = "eu-vat-meta";
+      meta.appendChild(document.createTextNode(`${f.dateRaw} · Total HT ${ht.toFixed(2)} € · NII : `));
+      const niiSpan = document.createElement("span");
+      niiSpan.className = "mono";
+      niiSpan.textContent = e.niiRaw || "(vide)";
+      meta.appendChild(niiSpan);
+      const badge = document.createElement("span");
+      badge.className = `vies-badge ${viesBadgeClass(e.viesStatus)}`;
+      badge.textContent = viesBadgeText(e.viesStatus);
+      meta.appendChild(badge);
+      li.appendChild(meta);
+
+      const detail = document.createElement("div");
+      detail.className = "eu-vat-meta";
+      detail.textContent = e.viesLabel;
+      li.appendChild(detail);
+
+      list.appendChild(li);
+    });
 }
 
 function showIgnoredInline() {

@@ -40,7 +40,7 @@ Pas de build. Pas de package.json. Pas de node_modules. Tout est statique. Chaqu
 - `window.EU` (`eu.js`) — codes pays, préfixes VAT, `getIgnoredVatPrefix` (IS/GB/CHE)
 - `window.Vies` (`vies.js`) — `parseVat`, appels VIES avec retry, concurrency
 - `window.Sage` (`sage.js`) — `parseSageTxt`, détection avoir/facture, clés de période
-- `window.Validators` (`validators.js`) — `classifyFactures` (blockers/ignored/toDeclare), `collectCandidateNiis`, `detectPeriods`
+- `window.Validators` (`validators.js`) — `classifyFactures` (blockers/ignored/toDeclare/euVatPaid), `collectCandidateNiis`, `detectPeriods`
 - `window.Generators` (`generators.js`) — `generateErtvaOds`, `generateDebCsv`, `triggerDownload`
 - `window.Storage` (`storage.js`) — wrapper `chrome.storage.local` (declarant + articles)
 
@@ -73,12 +73,15 @@ Une facture est **candidate LIC** (à déclarer) si :
 Sont **ignorées silencieusement** (pas une erreur) :
 - Factures France
 - Factures pays hors UE
-- Factures BtoC en UE (TVA > 0 %, pas de NII)
 - Factures dont le NII commence par `IS`, `GB` ou `CHE` (Islande, Royaume-Uni, Suisse — hors VIES). Voir `IGNORED_VAT_PREFIXES` dans `lib/eu.js`.
+
+Sont **signalées séparément (non bloquantes, à juger par la cliente)** — catégorie `euVatPaid` :
+- Pays UE hors France + toutes lignes TVA > 0 (BtoC ou incohérence Sage)
+- Affichées dans un panneau dédié à droite des blockers (écran BLOCKED) ou en dessous du tableau des LIC (écran OK).
+- Le NII (s'il est présent) est vérifié sur VIES à titre informatif — un badge indique le statut. La cliente juge s'il faut corriger dans Sage.
 
 Sont **bloquantes** (l'export est refusé, la cliente doit corriger) :
 - Pays UE + TVA 0 % + NII manquant
-- Pays UE + NII présent + TVA ≠ 0 % (incohérence, à vérifier dans Sage)
 - Lignes de facture mixtes (certaines à 0 %, d'autres non)
 - NII commence par FR sur une facture pays UE (autoconsommation)
 - NII d'un pays différent du pays client
